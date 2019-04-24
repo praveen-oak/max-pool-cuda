@@ -55,7 +55,7 @@ __global__ void max_pool_kernel(int channels, int image_height, int image_width,
 		}
 	}
 	__syncthreads();
-	
+	output_pointer[0] = 122.0;
 	double max_value = shared_pointer[(threadIdx.x)*(blockDim.y + pad_width) + threadIdx.y];
 	for(int i = 0; i < pool_height; i++){
 		for(int j = 0; j < pool_width; j++){
@@ -65,8 +65,9 @@ __global__ void max_pool_kernel(int channels, int image_height, int image_width,
 			}
 		}
 	}
-	output_pointer[0] = 122.0;
-	// output_pointer[global_offset+global_x_index*blockDim.y + global_y_index] = max_value;
+	// output_pointer[0] = 132.0;
+
+	global_pointer[global_offset+ (global_x_index*WIDTH) + global_y_index] = max_value;
 
 }
 int get_shared_memory_size(int pooling_height, int pooling_width){
