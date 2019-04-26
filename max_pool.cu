@@ -43,7 +43,7 @@ __global__ void max_pool_kernel(int channels, int image_height, int image_width,
 
 	for(int i = threadIdx.x - pad_height; i <= blockDim.x + pad_height; i = i + blockDim.x){
 		for(int j = threadIdx.y - pad_width; j <= blockDim.y + pad_width; j = j + blockDim.y){
-			int shared_mem_index = (i+pad_height)*(blockDim.y+pad_width) + (j+pad_width);
+			int shared_mem_index = (i+pad_height)*(blockDim.y+ 2*pad_width) + (j+pad_width);
 			global_x_index = block_x_index + i;
 			global_y_index = block_y_index + j;
 			shared_pointer[shared_mem_index] = 0;
@@ -55,19 +55,18 @@ __global__ void max_pool_kernel(int channels, int image_height, int image_width,
 		}
 	}
 	__syncthreads();
-	output_pointer[0] = 122.0;
-	double max_value = shared_pointer[(threadIdx.x)*(blockDim.y + pad_width) + threadIdx.y];
+	double max_value = 0.0;
 	for(int i = 0; i < pool_height; i++){
 		for(int j = 0; j < pool_width; j++){
-			int loc_index = (i+threadIdx.x)*(blockDim.y + pad_width) + (j+threadIdx.y);
+			int loc_index = (i+threadIdx.x)*(blockDim.y + 2*pad_width) + (j+threadIdx.y);
 				if(shared_pointer[loc_index] > max_value){
 					max_value = shared_pointer[loc_index];
 			}
 		}
 	}
-	// output_pointer[0] = 132.0;
-
-	global_pointer[global_offset+ (global_x_index*WIDTH) + global_y_index] = max_value;
+	global_x_index = block_x_index + threadIdx.x;
+	global_y_index = block_y_index + threadIdx.y;
+	output_pointer[global_offset+ (global_x_index*WIDTH) + global_y_index] = max_value;
 
 }
 int get_shared_memory_size(int pooling_height, int pooling_width){
@@ -102,7 +101,6 @@ void validate_image_data(int channels, int height, int width, double *image_poin
   			{
   				int index = i*X_STRIDE_SIZE + j*Y_STRIDE_SIZE + k*CHANNEL_STRIDE_SIZE;
   				sum = sum + image_pointer[index];
-  				// printf("i = %d, j = %d, k = %d Value of data at index %d is %lf\n",i, j, k, index, image_pointer[index]);
   			}
   		}
   	}
@@ -170,7 +168,7 @@ int main(int ac, char *av[]){
     cudaMemcpy(output_pointer, gpu_output_pointer, image_size, cudaMemcpyDeviceToHost);
     cudaDeviceSynchronize();
   	printf("After gpu code\n");
-  	validate_image_data(CHANNELS, HEIGHT, WIDTH, output_pointer);
+  	print_max_pool_checksum(CHANNELS, HEIGHT, WIDTH, output_pointer);
 
 
     
