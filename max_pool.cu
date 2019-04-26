@@ -37,15 +37,15 @@ __global__ void max_pool_kernel(int channels, int image_height, int image_width,
 	int global_x_index;
 	int global_y_index;
 
-	for(int i = threadIdx.x; i < blockDim.x + 2*pad_height; i = i + blockDim.x){
-		for(int j = threadIdx.y; j < blockDim.y + 2*pad_width; j = j + blockDim.y){
-			int shared_mem_index = i*(blockDim.y+ 2*pad_width) + j;
-			global_x_index = block_x_index - pad_height;
-			global_y_index = block_y_index - pad_width;
-			if(global_x_index < 0 || global_x_index >= image_height || global_y_index < 0 || global_y_index >= image_width){
+	for(int i = threadIdx.y; i < blockDim.y + 2*pad_height; i = i + blockDim.y){
+		for(int j = threadIdx.x; j < blockDim.x + 2*pad_width; j = j + blockDim.x){
+			int shared_mem_index = i*(blockDim.x+ 2*pad_width) + j;
+			global_y_index = block_y_index - pad_height;
+			global_x_index = block_x_index - pad_width;
+			if(global_x_index < 0 || global_x_index >= image_width || global_y_index < 0 || global_y_index >= image_height){
 				shared_pointer[shared_mem_index] = 0;
 			}else{
-				shared_pointer[shared_mem_index] = global_pointer[global_offset+ (global_x_index*WIDTH) + global_y_index];
+				shared_pointer[shared_mem_index] = global_pointer[global_offset+ (global_y_index*WIDTH) + global_x_index];
 			}
 		}
 	}
@@ -53,19 +53,19 @@ __global__ void max_pool_kernel(int channels, int image_height, int image_width,
 	double max_value = 0.0;
 	for(int i = 0; i < pool_height; i++){
 		for(int j = 0; j < pool_width; j++){
-			int loc_index = (i+threadIdx.x)*(blockDim.y + 2*pad_width) + (j+threadIdx.y);
+			int loc_index = (i+threadIdx.y)*(blockDim.x + 2*pad_width) + (j+threadIdx.x);
 			if(shared_pointer[loc_index] > max_value){
 				max_value = shared_pointer[loc_index];
 			}
 		}
 	}
-	global_x_index = block_x_index + threadIdx.x;
 	global_y_index = block_y_index + threadIdx.y;
-	output_pointer[global_offset+ (global_x_index*WIDTH) + global_y_index] = max_value;
+	global_x_index = block_x_index + threadIdx.x;
+	output_pointer[global_offset+ (global_y_index*WIDTH) + global_x_index] = max_value;
 }
 int get_shared_memory_size(int pooling_height, int pooling_width){
-	int total_height = TILE_HEIGHT + pooling_height + 1;
-	int total_width = TILE_WIDTH + pooling_width + 1;
+	int total_height = TILE_HEIGHT + pooling_height/2 * 2;
+	int total_width = TILE_WIDTH + pooling_width/2 * 2;
 	return total_width*total_height;
 }
 
@@ -164,7 +164,7 @@ int main(int ac, char *av[]){
   	printf("After gpu code\n");
   	print_max_pool_checksum(CHANNELS, HEIGHT, WIDTH, output_pointer);
 
-
+  	
     
    //  print_max_pool_checksum(CHANNELS, HEIGHT, WIDTH, output_pointer);
   	// CUDA_CALL(cudaFree(gpu_image_pointer));
