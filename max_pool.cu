@@ -131,7 +131,7 @@ void validate_image_data(int channels, int height, int width, double *image_poin
   			}
   		}
   	}
-  	printf("Check sum value is %lf \n",sum);
+  	printf("Check sum of image data is is %lf \n",sum);
   	if(sum == 3218079744.0){
   		printf("Check sum of image validated \n");
   	}
@@ -153,7 +153,7 @@ void print_max_pool_checksum(int channels, int height, int width, double *output
   			}
   		}
   	}
-  	printf("The checksum after the max_pool is %lf \n",sum);
+  	printf("The checksum of data after maxpool is %lf \n",sum);
 }
 void check_on_cpu(double *image_pointer, double *output_pointer){
 	int pooling_height = POOL_HEIGHT;
@@ -188,7 +188,14 @@ void check_on_cpu(double *image_pointer, double *output_pointer){
   	}
 }
 
+static double TimeSpecToSeconds(struct timespec* ts){
+    return (double)ts->tv_sec + (double)ts->tv_nsec / 1000000000.0;
+}
+
 int main(int ac, char *av[]){
+	struct timespec start;
+  	struct timespec end;
+  	double copytime;
 	int image_size = CHANNELS*HEIGHT*WIDTH*sizeof(double);
 	double *gpu_image_pointer, *gpu_output_pointer;
 	double *image_pointer, *output_pointer, *cpu_output_pointer;
@@ -203,20 +210,39 @@ int main(int ac, char *av[]){
 
   	CUDA_CALL(cudaMalloc(&gpu_image_pointer, image_size));
   	CUDA_CALL(cudaMalloc(&gpu_output_pointer, image_size));
+  	if(clock_gettime(CLOCK_MONOTONIC, &start)){ printf("CLOCK ERROR"); }
   	CUDA_CALL(cudaMemcpy(gpu_image_pointer, image_pointer, image_size, cudaMemcpyHostToDevice));
   	cudaDeviceSynchronize();
+  	if(clock_gettime(CLOCK_MONOTONIC, &end)) { printf("CLOCK ERROR"); }
+  	copytime = TimeSpecToSeconds(&end) - TimeSpecToSeconds(&start);
+  	printf("Copy host->dev = %lf sec \n",copytime);
 
   	dim3 image_block_vector(TILE_WIDTH, TILE_HEIGHT);
   	dim3 image_grid_vector(DIV_RUP(WIDTH, TILE_WIDTH), DIV_RUP(HEIGHT, TILE_HEIGHT), CHANNELS);
 
+  	if(clock_gettime(CLOCK_MONOTONIC, &start)){ printf("CLOCK ERROR"); }
   	max_pool_kernel<<<image_grid_vector, image_block_vector>>>(gpu_image_pointer, gpu_output_pointer);
     cudaDeviceSynchronize();
+    if(clock_gettime(CLOCK_MONOTONIC, &end)) { printf("CLOCK ERROR"); }
+    copytime = TimeSpecToSeconds(&end) - TimeSpecToSeconds(&start);
+  	printf("Time cuda code = %lf sec \n",copytime);
+
+
+  	if(clock_gettime(CLOCK_MONOTONIC, &start)){ printf("CLOCK ERROR"); }
     cudaMemcpy(output_pointer, gpu_output_pointer, image_size, cudaMemcpyDeviceToHost);
     cudaDeviceSynchronize();
+    if(clock_gettime(CLOCK_MONOTONIC, &end)) { printf("CLOCK ERROR"); }
+    copytime = TimeSpecToSeconds(&end) - TimeSpecToSeconds(&start);
+  	printf("Copy dev->host = %lf sec \n",copytime);
 
     print_max_pool_checksum(CHANNELS, HEIGHT, WIDTH, output_pointer);
-    check_on_cpu(image_pointer, cpu_output_pointer);
-    print_max_pool_checksum(CHANNELS, HEIGHT, WIDTH, cpu_output_pointer);
+
+
+    CUDA_CALL(cudaFree(gpu_image_pointer));
+    CUDA_CALL(cudaFree(gpu_output_pointer));
+   	free(image_pointer);
+   	free(output_pointer);
+   	free(cpu_output_pointer);
 
   	
 }
