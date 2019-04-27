@@ -12,16 +12,16 @@
 // } while (0)
 
 /* Image channels, height, width. */
-#define CHANNELS	  1
-#define HEIGHT	  9
-#define WIDTH	  9
+#define CHANNELS	  3
+#define HEIGHT	  1024
+#define WIDTH	  1024
 
 /* Tile size. */
-#define TILE_WIDTH		3
-#define TILE_HEIGHT		3
+#define TILE_WIDTH		32
+#define TILE_HEIGHT		32
 
-#define POOL_WIDTH 3
-#define POOL_HEIGHT 3
+#define POOL_WIDTH 21
+#define POOL_HEIGHT 21
 
 #define DIV_RUP(x, y)	(((x)+(y)-1)/(y))
 
@@ -43,6 +43,18 @@ struct ThreadIdx{
 	int y;
 	int z;
 };
+void print_shared_memory(double *shared_pointer){
+	int shared_mem_height = (POOL_HEIGHT/2) * 2 + TILE_WIDTH;
+  	int shared_mem_width = (POOL_WIDTH/2) * 2 + TILE_HEIGHT;
+  	for(int i = 0; i < shared_mem_height; i++){
+  		for(int j = 0; j < shared_mem_width; j++){
+  			int offset = i*shared_mem_width + j;
+  			double value = shared_pointer[offset];
+  			printf("%d,%0.1lf \t",offset,value);
+  		}
+  		printf("\n");
+  	}	
+}
 
 void build_shared_memory(struct BlockDim blockDim, struct BlockIdx blockIdx, struct ThreadIdx threadIdx,
 		double *shared_pointer, double*global_pointer){
@@ -85,22 +97,18 @@ void build_shared_memory(struct BlockDim blockDim, struct BlockIdx blockIdx, str
 	}
 }
 
-void max_pool_kernel(double *image_pointer, double *output_pointer, struct BlockDim blockDim, struct BlockIdx blockIdx, struct ThreadIdx threadIdx)
+void max_pool_kernel(double *shared_pointer,double *output_pointer, struct BlockDim blockDim, struct BlockIdx blockIdx, struct ThreadIdx threadIdx)
 {	
-
+	int channel_offset = blockIdx.z*HEIGHT*WIDTH;
+	double max_val = 0.0;
 	int shared_memory_height = blockDim.y + (POOL_HEIGHT/2) * 2;
 	int shared_memory_width = blockDim.x + (POOL_WIDTH/2) * 2;
-
-	double *shared_pointer = double[shared_memory_height*shared_memory_width];
-
-	build_shared_memory(blockDim, blockIdx, threadIdx, shared_pointer, image_pointer);
-	int channel_offset = blockDim.z*HEIGHT*WIDTH;
-	double max_val = 0.0;
 
 	int i = 0;
 	int j = 0;
 
-	while(i < POOL_WIDTH){
+	// print_shared_memory(shared_pointer);
+	while(i < POOL_HEIGHT){
 		j = 0;
 		while(j < POOL_WIDTH){
 			int x_offset = threadIdx.x + j;
@@ -110,12 +118,15 @@ void max_pool_kernel(double *image_pointer, double *output_pointer, struct Block
 			if(temp_max > max_val){
 				max_val = temp_max;
 			}
+			j = j + 1;
 		}
+		i = i + 1;
+
 	}
 	int global_x_index = blockDim.x*blockIdx.x + threadIdx.x;
 	int global_y_index = blockDim.y*blockIdx.y + threadIdx.y;
 
-	int global_index = channel_offset + global_y_index*global_y_index + global_x_index;
+	int global_index = channel_offset + global_y_index*WIDTH + global_x_index;
 	output_pointer[global_index] = max_val;
 }
 
@@ -130,7 +141,7 @@ void fill_image(int channels, int height, int width, double *image_pointer)
   	for(int i = 0; i < height; i++){
   		for(int j = 0; j < width; j++){
   			int index = i*WIDTH + j + k*WIDTH*HEIGHT;
-  			image_pointer[index] = i+1;
+  			image_pointer[index] = k*(i+j);
   		}
   	}
   }
@@ -204,35 +215,86 @@ void check_on_cpu(double *image_pointer, double *output_pointer){
 	  	}
   	}
 }
-void print_shared_memory(double *shared_pointer){
-	int shared_mem_height = (POOL_HEIGHT/2) * 2 + TILE_WIDTH;
-  	int shared_mem_width = (POOL_WIDTH/2) * 2 + TILE_HEIGHT;
-  	for(int i = 0; i < shared_mem_height; i++){
-  		for(int j = 0; j < shared_mem_width; j++){
-  			int offset = i*shared_mem_width + j;
-  			double value = shared_pointer[offset];
-  			printf("%d,%0.1lf \t",offset,value);
-  		}
-  		printf("\n");
-  	}	
-}
+
 void print_image(double *image_pointer){
 
 	int height = HEIGHT;
   	int width = WIDTH;
-  	for(int i = 0; i < height; i++){
-  		for(int j = 0; j < width; j++){
-  			int offset = i*width + j;
-  			double value = image_pointer[offset];
-  			printf("%0.1lf ",value);
-  		}
-  		printf("\n");
+  	for(int c = 0; c < CHANNELS; c++){
+  		for(int i = 0; i < height; i++){
+	  		for(int j = 0; j < width; j++){
+	  			int offset = c*WIDTH*HEIGHT + i*width + j;
+	  			double value = image_pointer[offset];
+	  			printf("%0.1lf ",value);
+	  		}
+	  		printf("\n");
+	  	}
   	}
+  	
 }
 void initialize_memory(double *pointer, int size, double value){
 	for(int i = 0; i< size; i++){
 		pointer[i] = value;
 	}
+}
+
+void run_with_shared(double *image_pointer, double *output_pointer){
+	struct BlockDim blockDim;
+	struct BlockIdx blockIdx;
+	struct ThreadIdx threadIdx;
+
+  	blockDim.x = TILE_WIDTH;
+  	blockDim.y = TILE_HEIGHT;
+
+  	int blocks_x = WIDTH/TILE_WIDTH;
+  	int blocks_y = HEIGHT/TILE_HEIGHT;
+  	int shared_memory_height = blockDim.y + (POOL_HEIGHT/2) * 2;
+	int shared_memory_width = blockDim.x + (POOL_WIDTH/2) * 2;
+
+	for(int c = 0;c < 3; c++){
+		for(int k = 0; k < blocks_y; k++){
+	  		for(int l = 0; l < blocks_x; l++){
+	  			blockIdx.x = l;
+	  			blockIdx.y = k;
+	  			blockIdx.z = c;
+	  			double shared_pointer[shared_memory_width*shared_memory_height];
+	  			for(int i = 0;i<blockDim.y;i++){
+					for(int j = 0;j<blockDim.x;j++){
+						threadIdx.x = j;
+						threadIdx.y = i;
+						build_shared_memory(blockDim, blockIdx, threadIdx, shared_pointer, image_pointer);
+					}
+				}
+				// print_shared_memory(shared_pointer);
+				for(int i = 0;i<blockDim.y;i++){
+					for(int j = 0;j<blockDim.x;j++){
+						threadIdx.x = j;
+						threadIdx.y = i;
+						max_pool_kernel(shared_pointer, output_pointer,blockDim,blockIdx,threadIdx);
+					}
+				}
+
+	  		}
+	  	}
+	}
+  	
+}
+void validate_cpu_gpu(double *gpu_pointer, double *cpu_pointer){
+	int height = HEIGHT;
+  	int width = WIDTH;
+  	for(int c = 0; c < CHANNELS; c++){
+  		for(int i = 0; i < height; i++){
+	  		for(int j = 0; j < width; j++){
+	  			int offset = c*HEIGHT*WIDTH + i*width + j;
+	  			double cpu_value = cpu_pointer[offset];
+	  			double gpu_value = gpu_pointer[offset];
+	  			if(cpu_value!=gpu_value){
+	  				printf("NE\n");
+	  			}
+	  		}
+	  	}	
+  	}
+  	
 }
 int main(int ac, char *av[]){
 	int image_size = CHANNELS*HEIGHT*WIDTH*sizeof(double);
@@ -244,40 +306,14 @@ int main(int ac, char *av[]){
 	image_pointer = (double *) malloc(image_size);
 	output_pointer = (double *) malloc(image_size);
 	cpu_output_pointer = (double *) malloc(image_size);
-	initialize_memory(image_pointer, image_size, 0.0);
-	initialize_memory(output_pointer, image_size, 0.0);
-	initialize_memory(cpu_output_pointer, image_size, 0.0);
   	fill_image(CHANNELS, HEIGHT, WIDTH, image_pointer);
-  	print_image(image_pointer);
-  	struct BlockDim blockDim;
-  	blockDim.x = 3;
-  	blockDim.y = 3;
-
-  	struct BlockIdx blockIdx;
-  	blockIdx.x = 0;
-  	blockIdx.y = 0;
-  	blockIdx.z = 0;
-  	double *shared_pointer = (double *)malloc(5*5);
-  	initialize_memory(shared_pointer, 25, 0.0);
-  	struct ThreadIdx threadIdx;
-  	printf("\n\n");
-	printf("x = %d, y = %d\n",blockIdx.x*blockDim.x,blockIdx.y*blockDim.y);
-
-	for(int i = 0;i<3;i++){
-		for(int j = 0;j<3;j++){
-			threadIdx.x = j;
-			threadIdx.y = i;
-			build_shared_memory(blockDim, blockIdx, threadIdx, shared_pointer, image_pointer);
-		}
-	}
-	
-	print_shared_memory(shared_pointer);
-	free(shared_pointer);
-  	free(image_pointer);
-  	free(output_pointer);
-  	free(cpu_output_pointer);
+  	validate_image_data(CHANNELS, HEIGHT, WIDTH, image_pointer);
   	
-
+  	check_on_cpu(image_pointer, cpu_output_pointer);
+  	run_with_shared(image_pointer, output_pointer);
+  	validate_cpu_gpu(output_pointer, cpu_output_pointer);
+  	print_max_pool_checksum(CHANNELS, HEIGHT, WIDTH, output_pointer);
+  	print_max_pool_checksum(CHANNELS, HEIGHT, WIDTH, cpu_output_pointer);
 }
 
 
