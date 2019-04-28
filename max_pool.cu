@@ -24,6 +24,7 @@
 #define POOL_WIDTH 21
 #define POOL_HEIGHT 21
 
+#define REPS		3
 #define DIV_RUP(x, y)	(((x)+(y)-1)/(y))
 
 
@@ -72,7 +73,7 @@ __global__ void max_pool_kernel(double *global_pointer, double *output_pointer){
 
 	channel_offset = blockIdx.z*HEIGHT*WIDTH;
 	double max_val = 0.0;
-	int shared_memory_height = blockDim.y + (POOL_HEIGHT/2) * 2;
+	// int shared_memory_height = blockDim.y + (POOL_HEIGHT/2) * 2;
 	int shared_memory_width = blockDim.x + (POOL_WIDTH/2) * 2;
 
 	i = 0;
@@ -192,6 +193,164 @@ static double TimeSpecToSeconds(struct timespec* ts){
     return (double)ts->tv_sec + (double)ts->tv_nsec / 1000000000.0;
 }
 
+
+#define checkCUDNN(expression)                    \
+{                                                  \
+	cudnnStatus_t status = (expression);           			  \
+	if (status != CUDNN_STATUS_SUCCESS) {        			    \
+		printf("cuDNN error on line %d: %s\n" , __LINE__ ,	\
+				cudnnGetErrorString(status));  						\
+		exit(EXIT_FAILURE);                           \
+	}                                               \
+}																									\
+
+
+struct CuDNN_Setup { 
+  cudnnHandle_t cudnn;
+  cudnnTensorDescriptor_t input_descriptor;
+  cudnnTensorDescriptor_t output_descriptor;
+  cudnnPoolingDescriptor_t pooling_descriptor;
+  size_t workspace_bytes;
+  void* d_workspace;
+  double alpha, beta;
+};
+
+
+void prepareCuDNN(CuDNN_Setup *pS, double *image_pointer, double *output_pointer) {
+	/* Create context object*/
+	checkCUDNN(cudnnCreate(&pS->cudnn));
+
+	/* Describe input tensor*/
+	checkCUDNN(cudnnCreateTensorDescriptor(&pS->input_descriptor));
+	checkCUDNN(cudnnSetTensor4dDescriptor(pS->input_descriptor,
+				/*format=*/CUDNN_TENSOR_NCHW,
+				/*dataType=*/CUDNN_DATA_DOUBLE,
+				/*batch_size=*/1,
+				/*channels=*/CHANNELS,
+				/*image_height=*/HEIGHT,
+				/*image_width=*/WIDTH));
+
+	/* Describe output tensor*/
+	checkCUDNN(cudnnCreateTensorDescriptor(&pS->output_descriptor));
+	checkCUDNN(cudnnSetTensor4dDescriptor(pS->output_descriptor,
+				/*format=*/CUDNN_TENSOR_NCHW,
+				/*dataType=*/CUDNN_DATA_DOUBLE,
+				/*batch_size=*/1,
+				/*channels=*/CHANNELS,
+				/*image_height=*/HEIGHT,
+				/*image_width=*/WIDTH));
+
+
+	/* Describe max pooling*/
+	checkCUDNN(cudnnCreatePoolingDescriptor(&pS->pooling_descriptor));
+	checkCUDNN(cudnnSetPooling2dDescriptor(
+    /*cudnnPoolingDescriptor_t*/    				pS->pooling_descriptor,
+    /*cudnnPoolingMode_t*/          				CUDNN_POOLING_MAX,
+    /*cudnnNanPropagation_t*/      					CUDNN_NOT_PROPAGATE_NAN,
+    /*height of pooling*/	                        POOL_HEIGHT,
+    /*width of pooling */	                        POOL_WIDTH,
+    /*vertical padding*/							POOL_HEIGHT/2,
+    /*horizontal padding*/							POOL_WIDTH/2,
+    /*vertical stride*/								1,
+    /*horizontal stride*/							1));
+
+	pS->alpha=1.0;
+	pS->beta=0.0;
+}
+
+
+void CleanupCuDNN(CuDNN_Setup *pS) {
+
+
+	/* Free workspace */
+	cudaFree(pS->d_workspace);
+
+	/* Destroy descriptors */
+	cudnnDestroyTensorDescriptor(pS->input_descriptor);
+	cudnnDestroyTensorDescriptor(pS->output_descriptor);
+	cudnnDestroyPoolingDescriptor(pS->pooling_descriptor);
+	cudnnDestroy(pS->cudnn);
+}
+
+void do_max_pooling(CuDNN_Setup *pS, double *image_pointer, double *output_pointer) {
+	checkCUDNN(cudnnPoolingForward(
+    /*cudnnHandle_t*/                    pS->cudnn,
+    /*const cudnnPoolingDescriptor_t*/   pS->pooling_descriptor,
+    /*const void*/                      &pS->alpha,
+    /*const cudnnTensorDescriptor_t*/    pS->input_descriptor,
+    /*const void*/                       image_pointer,
+    /*const void*/                      &pS->alpha,
+    /*const cudnnTensorDescriptor_t*/    pS->output_descriptor,
+    /*void*/                             output_pointer));
+}
+
+void do_cu_dnn_maxpooling(){
+
+	printf("Running the max pooling algorithm using CuDNN library \n");
+
+	struct timespec start;
+  	struct timespec end;
+  	double copytime;
+	int image_size = CHANNELS*HEIGHT*WIDTH*sizeof(double);
+	double *gpu_image_pointer, *gpu_output_pointer;
+	double *image_pointer, *output_pointer, *cpu_output_pointer;
+
+	double timecuDNN = 0;
+  	double  singletime;
+
+	image_pointer = (double *) malloc(image_size);
+	output_pointer = (double *) malloc(image_size);
+	cpu_output_pointer = (double *) malloc(image_size);
+	memset(output_pointer, 0, image_size);
+	memset(cpu_output_pointer, 0, image_size);
+
+  	fill_image(CHANNELS, HEIGHT, WIDTH, image_pointer);
+  	validate_image_data(CHANNELS, HEIGHT, WIDTH, image_pointer);
+
+  	CUDA_CALL(cudaMalloc(&gpu_image_pointer, image_size));
+  	CUDA_CALL(cudaMalloc(&gpu_output_pointer, image_size));
+
+  	CuDNN_Setup cuDNN_setup;
+  	prepareCuDNN(&cuDNN_setup, gpu_image_pointer, gpu_output_pointer);
+
+
+  	/* Run cuDNN kernel */
+  for (int i = 0; i < REPS; ++i) {
+    if(clock_gettime(CLOCK_MONOTONIC, &start)){ printf("CLOCK ERROR"); }
+    CUDA_CALL(cudaMemcpy(gpu_image_pointer, image_pointer, image_size, cudaMemcpyHostToDevice));  
+    cudaDeviceSynchronize();
+    if(clock_gettime(CLOCK_MONOTONIC, &end)) { printf("CLOCK ERROR"); }
+    copytime = TimeSpecToSeconds(&end) - TimeSpecToSeconds(&start);
+    printf("Copy host->dev cudnn %lf sec\n", copytime);
+
+    if(clock_gettime(CLOCK_MONOTONIC, &start)){ printf("CLOCK ERROR"); }
+    do_max_pooling(&cuDNN_setup, gpu_image_pointer, gpu_output_pointer);
+    cudaDeviceSynchronize();
+    if(clock_gettime(CLOCK_MONOTONIC, &end)) { printf("CLOCK ERROR"); }
+    singletime = TimeSpecToSeconds(&end) - TimeSpecToSeconds(&start);
+    timecuDNN+=singletime;
+    printf("time cudnn %lf sec\n", singletime);
+
+    if(clock_gettime(CLOCK_MONOTONIC, &start)){ printf("CLOCK ERROR"); }
+    CUDA_CALL(cudaMemcpy(output_pointer, gpu_output_pointer, image_size, cudaMemcpyDeviceToHost));                          // copy result back
+    cudaDeviceSynchronize();
+    if(clock_gettime(CLOCK_MONOTONIC, &end)) { printf("CLOCK ERROR"); }
+    copytime = TimeSpecToSeconds(&end) - TimeSpecToSeconds(&start);
+    printf("Copy dev->host kernel %lf sec\n", copytime);
+
+    print_max_pool_checksum(CHANNELS, HEIGHT, WIDTH, output_pointer);
+  }
+  timecuDNN/=REPS;
+
+
+  CleanupCuDNN(&cuDNN_setup);
+  CUDA_CALL(cudaFree(gpu_image_pointer));
+  CUDA_CALL(cudaFree(gpu_output_pointer));
+  free(image_pointer);
+  free(output_pointer);
+
+}
+
 int main(int ac, char *av[]){
 	struct timespec start;
   	struct timespec end;
@@ -244,7 +403,7 @@ int main(int ac, char *av[]){
    	free(output_pointer);
    	free(cpu_output_pointer);
 
-  	
+  	do_cu_dnn_maxpooling();
 }
 
 
