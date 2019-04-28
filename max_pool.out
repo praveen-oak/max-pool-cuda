@@ -1,0 +1,20 @@
+Running the max pooling algorithm using shared memory 
+
+Check sum of image data is is 3218079744.000000 
+Check sum of image validated 
+Copy host->dev = 0.003046 sec 
+Time cuda code = 0.011261 sec 
+Copy dev->host = 0.002060 sec 
+The checksum of data after maxpool is 3280656384.000000 
+
+
+Running the max pooling algorithm using CuDNN library 
+
+Check sum of image data is is 3218079744.000000 
+Check sum of image validated 
+Copy host->dev = 0.003023 sec
+Time cudnn =  0.026134 sec
+Copy dev->host kernel 0.002046 sec
+The checksum of data after maxpool is 3280656384.000000 
+
+
