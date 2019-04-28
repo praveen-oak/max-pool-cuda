@@ -79,7 +79,6 @@ __global__ void max_pool_kernel(double *global_pointer, double *output_pointer){
 	i = 0;
 	j = 0;
 
-	// print_shared_memory(shared_pointer);
 	while(i < POOL_HEIGHT){
 		j = 0;
 		while(j < POOL_WIDTH){
@@ -103,9 +102,6 @@ __global__ void max_pool_kernel(double *global_pointer, double *output_pointer){
   	
 }
 
-///////////////////////////////////////////////////////////////////////////////
-// Create Image in CPU memory
-////////////////////////////////////////////////////////////////////////////////
 void fill_image(int channels, int height, int width, double *image_pointer)
 {
   int image_memory_size = channels*height*width*sizeof(double);
@@ -286,7 +282,7 @@ void do_max_pooling(CuDNN_Setup *pS, double *image_pointer, double *output_point
 
 void do_cu_dnn_maxpooling(){
 
-	printf("Running the max pooling algorithm using CuDNN library \n");
+	printf("Running the max pooling algorithm using CuDNN library \n\n");
 
 	struct timespec start;
   	struct timespec end;
@@ -294,9 +290,6 @@ void do_cu_dnn_maxpooling(){
 	int image_size = CHANNELS*HEIGHT*WIDTH*sizeof(double);
 	double *gpu_image_pointer, *gpu_output_pointer;
 	double *image_pointer, *output_pointer, *cpu_output_pointer;
-
-	double timecuDNN = 0;
-  	double  singletime;
 
 	image_pointer = (double *) malloc(image_size);
 	output_pointer = (double *) malloc(image_size);
@@ -314,22 +307,19 @@ void do_cu_dnn_maxpooling(){
   	prepareCuDNN(&cuDNN_setup, gpu_image_pointer, gpu_output_pointer);
 
 
-  	/* Run cuDNN kernel */
-  for (int i = 0; i < REPS; ++i) {
     if(clock_gettime(CLOCK_MONOTONIC, &start)){ printf("CLOCK ERROR"); }
     CUDA_CALL(cudaMemcpy(gpu_image_pointer, image_pointer, image_size, cudaMemcpyHostToDevice));  
     cudaDeviceSynchronize();
     if(clock_gettime(CLOCK_MONOTONIC, &end)) { printf("CLOCK ERROR"); }
     copytime = TimeSpecToSeconds(&end) - TimeSpecToSeconds(&start);
-    printf("Copy host->dev cudnn %lf sec\n", copytime);
+    printf("Copy host->dev = %lf sec\n", copytime);
 
     if(clock_gettime(CLOCK_MONOTONIC, &start)){ printf("CLOCK ERROR"); }
     do_max_pooling(&cuDNN_setup, gpu_image_pointer, gpu_output_pointer);
     cudaDeviceSynchronize();
     if(clock_gettime(CLOCK_MONOTONIC, &end)) { printf("CLOCK ERROR"); }
-    singletime = TimeSpecToSeconds(&end) - TimeSpecToSeconds(&start);
-    timecuDNN+=singletime;
-    printf("time cudnn %lf sec\n", singletime);
+    copytime = TimeSpecToSeconds(&end) - TimeSpecToSeconds(&start);
+    printf("Time cudnn =  %lf sec\n", copytime);
 
     if(clock_gettime(CLOCK_MONOTONIC, &start)){ printf("CLOCK ERROR"); }
     CUDA_CALL(cudaMemcpy(output_pointer, gpu_output_pointer, image_size, cudaMemcpyDeviceToHost));                          // copy result back
@@ -339,19 +329,20 @@ void do_cu_dnn_maxpooling(){
     printf("Copy dev->host kernel %lf sec\n", copytime);
 
     print_max_pool_checksum(CHANNELS, HEIGHT, WIDTH, output_pointer);
-  }
-  timecuDNN/=REPS;
 
 
-  CleanupCuDNN(&cuDNN_setup);
-  CUDA_CALL(cudaFree(gpu_image_pointer));
-  CUDA_CALL(cudaFree(gpu_output_pointer));
-  free(image_pointer);
-  free(output_pointer);
+	CleanupCuDNN(&cuDNN_setup);
+	CUDA_CALL(cudaFree(gpu_image_pointer));
+	CUDA_CALL(cudaFree(gpu_output_pointer));
+	free(image_pointer);
+	free(output_pointer);
+	printf("\n\n");
 
 }
 
-int main(int ac, char *av[]){
+void do_cuda_max_pooling(){
+
+	printf("Running the max pooling algorithm using shared memory \n\n");
 	struct timespec start;
   	struct timespec end;
   	double copytime;
@@ -403,6 +394,11 @@ int main(int ac, char *av[]){
    	free(output_pointer);
    	free(cpu_output_pointer);
 
+   	printf("\n\n");
+
+}
+int main(int ac, char *av[]){
+	do_cuda_max_pooling();
   	do_cu_dnn_maxpooling();
 }
 
