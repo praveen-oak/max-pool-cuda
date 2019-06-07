@@ -4,7 +4,7 @@ Implemented the max pool filter used in convolutional neural networks in two dif
 2. From scratch using the shared memory.
 
 The intention was to look at how the performance of the generic cnDNN library compares with a specific optimized GPU specific implementation.
-It turns out that building a filter using shared memeory and tailoring the solution for the requirements make the code run 505 faster!
+It turns out that building a filter using shared memeory and tailoring the solution for the requirements make the code run 2x faster!
 
 How to the run the code.
 The code has the following dependencies.
